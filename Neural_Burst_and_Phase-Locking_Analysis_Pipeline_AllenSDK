@@ -1,0 +1,96 @@
+import os
+import numpy as np
+import pandas as pd
+import pywt
+from pathlib import Path
+import matplotlib.pyplot as plt
+%matplotlib inline
+from scipy.signal import butter, filtfilt, hilbert
+import json
+import math
+import itertools
+
+# Set display option to show all columns
+pd.set_option('display.max_columns', None)
+from allensdk.brain_observatory.behavior.behavior_project_cache import
+VisualBehaviorNeuropixelsProjectCache
+output_dir = "D:\Lowet_lab\AllenSDK\cache"
+cache = VisualBehaviorNeuropixelsProjectCache.from_s3_cache(
+cache_dir=output_dir)
+
+# get the metadata tables
+units_table = cache.get_unit_table()
+channels_table = cache.get_channel_table()
+probes_table = cache.get_probe_table()
+behavior_sessions_table = cache.get_behavior_session_table()
+ecephys_sessions_table = cache.get_ecephys_session_table()
+#*********** Variables ************
+# Get list of available areas
+area_names =np.unique(channels_table['structure_acronym'])
+# print(area_names)
+
+# Define your list of areas of interest
+area_list = np.array(['CA1','CA3','DG','LGd','SUB','VISp','VISam'],
+object)
+
+# Generate all possible combinations(also camparing to the area itself)
+area_combinations = list(itertools.product(area_list, repeat=2))
+# Print the results
+print(area_combinations)
+
+# optional- Set up Devision of neurons close vs far from probe (leave at
+> 200000 when no devision is needed)
+distance_devision = 200000 #near < distance_devision & far
+>distance_devision
+# Presentation windows
+window_before_ms = 1250 # 1.25 seconds before in milliseconds
+window_after_ms = 750 # 0.75 seconds after in milliseconds
+# Set Sampling Frequency
+FS = 1250 # Replace with your actual sampling frequency
+# Define theta and gamma bands (Hz)
+theta_band = [3, 10]
+gamma_band = [30, 60]
+# Define Frequency bins for the phase-locking distribution
+bin_width = 1 # 1 Hz bin width
+freq_bins = np.arange(1, 100, bin_width)
+# ******************* Functions ********************
+def filter_freq_band(signal, FS, band):
+nyquist = 0.5 * FS
+low, high = band[0] / nyquist, band[1] / nyquist
+b, a = butter(2, [low, high], btype='band')
+return filtfilt(b, a, signal)
+def calculate_mvl(angles_all_trials):
+if len(angles_all_trials) < 10:
+return np.nan
+mean_vector_length = np.abs(np.nanmean(np.exp(1j *
+np.array(angles_all_trials))))
+if mean_vector_length == 1.0:
+return np.nan
+NT = np.sum(~np.isnan(angles_all_trials))
+MLVsquare = mean_vector_length ** 2
+MLV_unbiased = (1 / (NT - 1)) * ((MLVsquare * NT) - 1)
+return MLV_unbiased
+def process_events(events_per_unit, Vm_segments, band_label):
+print(f"Processing spikes for {band_label} band")
+plv = {}
+units_with_events = []
+angles_all_units = []
+for unit in events_per_unit:
+event_times_unit = events_per_unit[unit]
+if event_times_unit.size == 0 or np.all(event_times_unit == 0):
+continue
+angles_all_trials = []
+has_events = False
+event_indices_count = 0
+for trial_index, event_times in enumerate(event_times_unit):
+event_indices = np.where(event_times == 1)[0]
+if len(event_indices) == 0:
+continue
+Vm = Vm_segments[trial_index]
+angles_vm = np.angle(hilbert(Vm))
+angles_events = angles_vm[event_indices]
+if len(angles_events) == 0:
+continue
+angles_all_trials.extend(angles_events)
+has_events = True
+event_indices_count += len(event_indices)
